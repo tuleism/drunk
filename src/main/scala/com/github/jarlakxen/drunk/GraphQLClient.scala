@@ -18,24 +18,17 @@ package com.github.jarlakxen.drunk
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util._
-import akka.actor.ActorSystem
-import akka.http.scaladsl.Http.OutgoingConnection
-import akka.http.scaladsl.model.{HttpHeader, HttpRequest, HttpResponse, Uri}
-import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.Flow
-import backend.{AkkaBackend, AkkaConnectionBackend, AkkaHttpBackend}
+import com.softwaremill.sttp._
+import com.softwaremill.sttp.circe._
 import extensions.{GraphQLExtensions, NoExtensions}
 import io.circe._
 import io.circe.parser._
-import sangria._
 import sangria.ast.Document
 import sangria.introspection._
 import sangria.marshalling.circe._
-import sangria.parser.{QueryParser, SyntaxError}
+import sangria.parser.{QueryParser}
 
-import scala.collection.immutable
-
-class GraphQLClient private[GraphQLClient] (options: ClientOptions, backend: AkkaBackend) {
+class GraphQLClient private[GraphQLClient] (uri: Uri, options: ClientOptions, headers: Seq[(String, String)])(implicit backend: SttpBackend[Future, Nothing]) {
   import GraphQLClient._
 
   private[drunk] def execute[Res, Vars](doc: Document, variables: Option[Vars], name: Option[String])(
@@ -44,6 +37,12 @@ class GraphQLClient private[GraphQLClient] (options: ClientOptions, backend: Akk
     ec: ExecutionContext
   ): Future[(Int, Json)] =
     execute(GraphQLOperation(doc, variables, name))
+
+  private def buildRequest(body: String) = sttp
+    .post(uri)
+    .body(body)
+    .response(asString)
+    .headers(headers: _*)
 
   private[drunk] def execute[Res, Vars](op: GraphQLOperation[Res, Vars])(
     implicit
@@ -55,10 +54,19 @@ class GraphQLClient private[GraphQLClient] (options: ClientOptions, backend: Akk
         op.encodeVariables.map("variables" -> _) ++
         op.name.map("operationName" -> Json.fromString(_))
 
-    val body = Json.obj(fields: _*).noSpaces
+    val body: String = Json.obj(fields: _*).noSpaces
+    val request = buildRequest(body)
 
     for {
-      (statusCode, rawBody) <- backend.send(body)
+      (statusCode, rawBody) <- request.send.map {
+        case Response(rawErrorBody, code, _, _, _) =>
+          val body = rawErrorBody
+            .left
+            .map(new String(_))
+            .merge
+
+          (code, body)
+      }
       jsonBody <- Future.fromTry(parse(rawBody).toTry)
     } yield (statusCode, jsonBody)
   }
@@ -170,28 +178,12 @@ object GraphQLClient {
 
   type GraphQLResponse[Res] = Either[GraphQLResponseError, GraphQLResponseData[Res]]
 
-  def apply(backend: AkkaBackend, clientOptions: ClientOptions): GraphQLClient =
-    new GraphQLClient(clientOptions, backend)
-
   def apply(
     uri: String,
-    options: ConnectionOptions = ConnectionOptions.Default,
     clientOptions: ClientOptions = ClientOptions.Default,
-    headers: immutable.Seq[HttpHeader] = Nil
-  ): GraphQLClient = {
-    implicit val as: ActorSystem = ActorSystem("GraphQLClient")
-    implicit val mat: ActorMaterializer = ActorMaterializer()
-    val backend = AkkaHttpBackend(Uri(uri), headers)
-    new GraphQLClient(clientOptions, backend)
-  }
-
-  def apply(
-    uri: Uri,
-    flow: Flow[HttpRequest, HttpResponse, Future[OutgoingConnection]],
-    clientOptions: ClientOptions,
-    headers: immutable.Seq[HttpHeader]
-  )(implicit as: ActorSystem, mat: ActorMaterializer): GraphQLClient =
-    new GraphQLClient(clientOptions, AkkaConnectionBackend(uri, flow, headers))
+    headers: Seq[(String, String)] = Seq.empty
+  )(implicit backend: SttpBackend[Future, Nothing]): GraphQLClient =
+    new GraphQLClient(uri"$uri", clientOptions, headers)(backend)
 
   private[GraphQLClient] def extractErrors(body: Json, statusCode: Int): Option[GraphQLResponseError] = {
     val cursor: HCursor = body.hcursor
