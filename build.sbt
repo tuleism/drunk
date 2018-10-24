@@ -8,13 +8,13 @@ val projectName = "drunk"
 
 name := projectName
 
-organization := "com.github.jarlakxen"
+organization := "com.github.leadiq"
 
 crossScalaVersions := Seq("2.12.7", "2.11.12")
 
 scalaVersion := crossScalaVersions.value.head
 
-organizationName := "Facundo Viale"
+organizationName := "LeadIQ"
 startYear := Some(2018)
 licenses += ("Apache-2.0", new URL("https://www.apache.org/licenses/LICENSE-2.0.txt"))
 
@@ -77,3 +77,7 @@ libraryDependencies ++= Seq(
 fork in (Test, run) := false
 
 scalacOptions in Test ++= Seq("-Yrangepos")
+
+val artifactory = Some("Artifactory Realm" at "http://artifactory.leadiqapp.com/artifactory/leadiq-repo")
+publishArtifact in (Compile, packageDoc) := false
+publishTo := artifactory

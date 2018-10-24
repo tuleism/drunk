@@ -106,7 +106,7 @@ class GraphQLClient[F[_]] private[GraphQLClient] (uri: Uri, options: ClientOptio
   def query[Res, Vars](doc: Document, variables: Option[Vars], operationName: Option[String])(
     implicit
     dec: Decoder[Res],
-    en: Encoder[Vars],
+    en: Encoder[Vars]
   ): GraphQLCursor[F, Res, Vars] = {
     var fullDoc = doc
     if (options.addTypename) {
